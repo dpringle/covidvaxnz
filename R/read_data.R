@@ -1,16 +1,14 @@
 rm(list = ls()); gc()
-setwd("/Users/danielpringle/Code/covid")
+setwd("/Users/danielpringle/Code/covidvaxnz/R")
 
 library(tidyverse)
 library(data.table)
 library(readxl)
 
-file <- "0_data/211024_cvip_equity.xlsx"
+file <- "/Users/danielpringle/Code/covidvaxnz/data/211024_cvip_equity.xlsx"
 sheets <- file %>%
   excel_sheets() %>% 
   set_names() 
-
-sheets
 
 x <- lapply(sheets, function(X) readxl::read_excel(file, sheet = X))
 x <- lapply(x, as.data.table)
