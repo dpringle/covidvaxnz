@@ -1,0 +1,292 @@
+---
+title: "NZ Covid Vaccination"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r set_up, include=FALSE, eval=TRUE}
+rm(list = ls()); gc()
+
+library(tidyverse)
+library(data.table)
+library(readxl)
+library(gridExtra)
+library(lemon)
+library(scales)
+
+wd <- "/Users/danielpringle/Code/covidvaxnz/R"
+setwd(wd)
+```
+
+## Ministry of Health Data
+
+Data downloaded from [NZ Ministry of Health](https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-data-and-statistics/covid-19-vaccine-data#download) 
+
+### Reading Data
+
+```{r read_prepare_data, eval=TRUE, results='hide', echo=FALSE,  message=FALSE}
+# https://www.health.govt.nz/system/files/documents/pages/211024_-_cvip_equity_-_rate_ratios_and_uptake_over_time.xlsx
+file <- "/Users/danielpringle/Code/covidvaxnz/data/211024_cvip_equity.xlsx"
+
+sheets <- file %>%
+  excel_sheets() %>% 
+  set_names() 
+
+  x <- lapply(sheets, function(X) readxl::read_excel(file, sheet = X))
+  x <- lapply(x, as.data.table)
+  names(x) <- sheets
+
+
+# Long table of vaccination data, and HSU population data by age-ethnic splits
+vx_query <- x[["Vaccination Query"]]
+dhb_pop <- x[["HSU Table"]]
+
+# Join data and tidy up
+vx <- merge(x = vx_query, y = dhb_pop, by = c("Ethnic group", "Age group", "DHB of residence"))
+oldnames = c("Week ending date", 
+             "Dose number", 
+             "Ethnic group", 
+             "Age group", 
+             "DHB of residence",
+             "# doses administered", 
+             "# people (HSU)")
+newnames = c("week", 
+             "dose", 
+             "ethnicgroup", 
+             "agegroup", 
+             "DHB", 
+             "count", 
+             "popsegment")
+setnames(vx, old = oldnames, new = newnames)
+setcolorder(vx, newnames)
+
+# Set as date / factors
+vx$week <- as.Date(vx$week)
+vx$dose <- factor(vx$dose)
+vx$agegroup <- factor(vx$agegroup)
+vx$ethnicgroup <- factor(vx$ethnicgroup)
+
+# Remove 'Unknown', 'Overseas' and 'Overseas and undefined'
+vx <- vx[!get("DHB") %in% c('Unknown', 'Overseas','Overseas and undefined')] 
+vx$DHB <- factor(vx$DHB)
+
+# pop as HSU population stats with above names
+pop <- dhb_pop
+oldnames = c("Ethnic group", 
+             "Age group", 
+             "DHB of residence",
+             "# people (HSU)")
+newnames = c("ethnicgroup", 
+             "agegroup", 
+             "DHB",
+             "popsegment")
+setnames(pop, old = oldnames, new = newnames)
+setcolorder(pop, newnames)
+setorderv(pop, c( "DHB", "ethnicgroup", "agegroup"))
+
+pop <- pop[!get("DHB") %in% c('Unknown', 'Overseas','Overseas and undefined')] 
+pop$DHB <- factor(pop$DHB)
+pop$agegroup <- factor(pop$agegroup)
+pop$ethnicgroup <- factor(pop$ethnicgroup)
+```
+
+### Data contains weekly vaccination counts and population demographics by DHB 
+
+Data includes counts of first and second dose vaccinations, by week, split by Ethnic group, Age group, and DHB oof residence. It also includes a separate table of HSU population statistics, split into the same groups for each DHB. These numebrs are used to determine percentage vaccination rates, cut in various ways.
+
+```{r inspect_data, include=TRUE, asis = TRUE}
+str(vx)
+head(vx, 20)
+str(pop)
+head(pop, 20)
+```
+
+## Summary Statistics
+
+Before looking at vaccination rates, split out in detail, let's summarise the overall data:
+
+```{r pop_by_DHB, include=TRUE, echo = FALSE}
+# Total population by DHB
+pop_dhb_tot <- pop[ , .(population = sum(popsegment), ethnicgroup = "Total"), by = c("DHB")]
+pop_dhb_eth <- pop[ , .(population = sum(popsegment)), by = c("DHB", "ethnicgroup")]
+pop_dhb <- rbind(pop_dhb_tot, pop_dhb_eth)
+
+p_pop_tot <- ggplot(data = pop_dhb[ethnicgroup == "Total"], aes(x = reorder(DHB, population), y = population/1000)) +
+  geom_col(fill = "lightblue") +
+  coord_flip() +
+  labs(y = "Population (1000s)",
+       x = "") +
+  ggtitle("Total Population by DHB") +
+  theme_minimal()
+grid.arrange(p_pop_tot)
+```
+
+### Ethnic Group
+
+MOH report data by Ethnic group and age group, and both factors have been commented on in the media. The chart belows below show the Ethnic group split reported by DHB, ordered by total population.
+
+```{r pop_by_DHB_eth, include=TRUE, echo = FALSE}
+# Total population by DHB and ethnic group
+pop_dhb_tot <- pop[ , .(population = sum(popsegment), ethnicgroup = "Total"), by = c("DHB")]
+pop_dhb_eth <- pop[ , .(population = sum(popsegment)), by = c("DHB", "ethnicgroup")]
+pop_dhb <- rbind(pop_dhb_tot, pop_dhb_eth)
+
+p_pop_tot_eth <- ggplot(data = pop_dhb, aes(x = reorder(DHB, population), y = population/1000)) +
+  geom_col(aes(fill = ethnicgroup)) +
+  coord_flip() +
+  labs(y = "Population (1000s)",
+       x = "") +
+  scale_y_continuous(limits = c(0,700),
+                     breaks = seq(0,600,200)) +
+  ggtitle("Population by Ethnic Group by DHB") +
+  geom_text(aes(label = round(population/1000)), hjust = -0.2, colour = "darkgrey") +
+  facet_wrap(~ethnicgroup, nrow = 1) +
+  theme_minimal() +
+  theme(legend.position='none')
+
+grid.arrange(p_pop_tot_eth, nrow = 1)
+```
+
+```{r frac_pop_by_DHB_eth, include=TRUE, echo = FALSE}
+# Total population by DHB and ethnic group
+
+frac_pop_dhb_eth <- pop[ , .(population = sum(popsegment)), 
+                by = c("DHB", "ethnicgroup")]
+frac_pop_dhb_eth <- frac_pop_dhb_eth[ , `:=`(fraction = round(population/sum(population),3)),
+                by = c("DHB")]
+
+p_frac_pop_eth <- ggplot(data = frac_pop_dhb_eth[ethnicgroup %in% c("Māori", "Pacific")], aes(x = reorder(DHB, fraction), y = fraction)) +
+  geom_col(aes(fill = ethnicgroup)) +
+  coord_flip() +
+  labs(y = "Fraction of population by DHB",
+       x = "") +
+  scale_y_continuous(label = scales::percent_format(accuracy = 1),
+                     limits = c(0,0.5),
+                     breaks = seq(0.1,0.5,0.1)) +
+  ggtitle("Fraction of  Māori and Pacific population by DHB") +
+  theme_minimal() +
+  facet_wrap(~ethnicgroup)+
+  theme(legend.position='none')
+
+grid.arrange(p_frac_pop_eth, nrow = 1)
+
+```
+
+### Age Group
+
+The vaccination target is two doses of pfizer vaccine for 90% of the eligible population in each DHB. At present, the ineligible popualtion is people with medical exemptions and children under the age of 12. The population data accessed here does not include ondere 12s. That is, the sum for each DHB over all age and ethnic groups is the vaccine-eligible populaiton (apart from small numbers of exemptions).
+
+Another age realted factos is the initial roll out to more vulnerable people, including those over 65 years of age. This should be kept in mind when comoparing vaccination uptake, as some DHBs have older (or younger) poplautions than others. 
+
+MOH report data by Ethnic group and age group, and both factors have been commented on in the media. The chart belows below show the Ethnic group split reported by DHB, againi ordered by total population.
+
+```{r pop_by_DHB_age, include=TRUE, echo = FALSE}
+# Total population by DHB and ethnic group
+
+pop_dhb_age <- pop[ , .(population = sum(popsegment)), 
+                by = c("DHB", "agegroup")]
+pop_dhb_age <- pop_dhb_age[ , `:=`(fraction = round(population/sum(population),3)),
+                by = c("DHB")]
+
+p_age_frac65 <- ggplot(data = pop_dhb_age[agegroup=="65+"], aes(x = reorder(DHB, fraction), y = fraction)) +
+    geom_col(fill = "lightblue") +
+  coord_flip() +
+  labs(y = "Fraction over 65 years old",
+       x = "") +
+  scale_y_continuous(label = scales::percent_format(accuracy = 1),
+                     limits = c(0,0.35),
+                     breaks = seq(0.1,0.35,0.05)) +
+  ggtitle("Fration of Population 65+") +
+  theme_minimal() 
+
+grid.arrange(p_age_frac65, nrow = 1)
+
+```
+
+## Uptake Rates
+
+### Overall NZ Uptake Rate
+
+Let's now look at the vaccination uptake rates, recorded as first or second dose counts per week. 
+
+```{r vax_uptake_nz,  include = TRUE, echo = FALSE, comment ="",, fig.align='center'}
+v_nz <- vx[ , .(count = sum(count),
+                pop = sum(popsegment)), .(week, dose)]
+setorderv(v_nz, c("week", "dose"))
+v_nz[ , `:=`(total = cumsum(count)), .(dose)]
+v_nz[ , `:=`(uptake = round(total/pop, 3)), .(dose)]
+
+p_v_nz_week <- ggplot(data = v_nz, aes(x = week, y = count, color = dose)) +
+  geom_line() +
+  scale_x_date() +
+  scale_y_continuous(position = "right",label=comma) +
+  labs(y = "",
+       x = "Week ended") +
+  ggtitle("Weekly number of first and second vaccinations received") +
+  theme_minimal() +
+  theme(legend.position=c(0.2,0.5), 
+        legend.direction = "horizontal")
+
+p_v_nz_total <- ggplot(data = v_nz, aes(x = week, y = total, color = dose)) +
+  geom_line() +
+  scale_x_date() +
+  scale_y_continuous(position = "right",label=comma)+
+  labs(y = "",
+       x = "") +
+  ggtitle("Total number of first and second vaccinations received to date") +
+  theme_minimal() +
+  theme(legend.position=c(0.2,0.5), 
+        legend.direction = "horizontal")
+
+p_v_nz_uptake <- ggplot(data = v_nz, aes(x = week, y = uptake, color = dose)) +
+  geom_line() +
+  scale_x_date() +
+  scale_y_continuous(position = "right",
+                     label = scales::percent_format(accuracy = 1),
+                     limits = c(0,1),
+                     breaks = seq(0,1,0.2)) +
+  labs(y = "",
+       x = "") +
+  ggtitle("Uptake of first and second vaccinations") +
+  theme_minimal() +
+  theme(legend.position=c(0.2,0.5), 
+        legend.direction = "horizontal")
+
+gA <- ggplotGrob(p_v_nz_week)
+gB <- ggplotGrob(p_v_nz_total)
+gC <- ggplotGrob(p_v_nz_uptake)
+grid::grid.newpage()
+grid::grid.draw(rbind(gA, gB, gC))
+
+```
+### Uptake Rate by DHB
+
+Let's now look at the vaccination uptake rates, recorded as first or second dose counts per week. 
+
+```{r vax_uptake_dhb,  include = TRUE, echo = FALSE, comment ="",fig.asp=1, fig.align='center'}
+v_dhb <- vx[ , .(count = sum(count),
+                pop = sum(popsegment)), .(week, dose, DHB)]
+setorderv(v_dhb, c("DHB", "week", "dose"))
+v_dhb[ , `:=`(total = cumsum(count)), .(dose, DHB)]
+v_dhb[ , `:=`(uptake = round(total/pop, 3)), .(dose, DHB)]
+
+p_v_dhb_uptake <- ggplot(data = v_dhb, aes(x = week, y = uptake, color = dose)) +
+  geom_line() +
+  scale_x_date() +
+  geom_hline(yintercept = 0.9, linetype = "dashed") +
+  scale_y_continuous(position = "right",
+                     label = scales::percent_format(accuracy = 1),
+                     limits = c(0,1),
+                     breaks = seq(0,1,0.2)) +
+  labs(y = "",
+       x = "") +
+  ggtitle("Uptake of first and second vaccinations") +
+  theme_minimal() +
+  theme(legend.position="bottom", 
+        legend.direction = "horizontal") +
+  facet_wrap(~DHB)
+
+grid.arrange(p_v_dhb_uptake)
+
+```
