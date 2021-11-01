@@ -14,6 +14,7 @@ library(readxl)
 library(gridExtra)
 library(lemon)
 library(scales)
+library(ggrepel)
 
 wd <- "/Users/danielpringle/Code/covidvaxnz/R"
 setwd(wd)
@@ -204,6 +205,7 @@ grid.arrange(p_age_frac65, nrow = 1)
 
 ```
 
+
 ## Uptake Rates
 
 ### Overall NZ Uptake Rate
@@ -260,6 +262,7 @@ grid::grid.newpage()
 grid::grid.draw(rbind(gA, gB, gC))
 
 ```
+
 ### Uptake Rate by DHB
 
 Let's now look at the vaccination uptake rates, recorded as first or second dose counts per week. 
@@ -271,6 +274,13 @@ setorderv(v_dhb, c("DHB", "week", "dose"))
 v_dhb[ , `:=`(total = cumsum(count)), .(dose, DHB)]
 v_dhb[ , `:=`(uptake = round(total/pop, 3)), .(dose, DHB)]
 
+last_data <- v_dhb[get("week") == max(get("week")), 
+                   .(week = week,
+                     count = count, 
+                     total = total, 
+                     uptake = uptake ), 
+                   .(dose, DHB)]
+
 p_v_dhb_uptake <- ggplot(data = v_dhb, aes(x = week, y = uptake, color = dose)) +
   geom_line() +
   scale_x_date() +
@@ -279,14 +289,23 @@ p_v_dhb_uptake <- ggplot(data = v_dhb, aes(x = week, y = uptake, color = dose)) 
                      label = scales::percent_format(accuracy = 1),
                      limits = c(0,1),
                      breaks = seq(0,1,0.2)) +
-  labs(y = "",
-       x = "") +
-  ggtitle("Uptake of first and second vaccinations") +
-  theme_minimal() +
-  theme(legend.position="bottom", 
-        legend.direction = "horizontal") +
-  facet_wrap(~DHB)
+  labs(y = "", x = "") +
+  geom_text_repel(aes(label = paste0(round(100*uptake,0), "%")), data = last_data, size = 5) +
+  ggtitle(paste0("Uptake of first and second vaccinations, at ", format(max(vx$week), "%d %B %Y"))) +
+  facet_wrap(~DHB) + 
+  theme_bw() +
+  # theme(legend.position="bottom", 
+  #       legend.direction = "horizontal") +
+  theme(legend.position="none") +
+  theme(axis.text=element_text(size=10), #change font size of axis text
+        axis.title=element_text(size=10), #change font size of axis titles
+        plot.title=element_text(size=10), #change font size of plot title
+        legend.text=element_text(size=10), #change font size of legend text
+        strip.text=element_text(size=10), #change font size of facet strip text
+        legend.title=element_text(size=10)) #change font size of legend title   
 
 grid.arrange(p_v_dhb_uptake)
 
 ```
+
+### Correlations between uptake and other factors
