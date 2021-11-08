@@ -11,13 +11,15 @@ rm(list = ls()); gc()
 library(tidyverse)
 library(data.table)
 library(readxl)
+library(broom)
 library(gridExtra)
 library(lemon)
 library(scales)
 library(ggrepel)
 
-wd <- "/Users/danielpringle/Code/covidvaxnz/R"
-setwd(wd)
+setwd("/Users/danielpringle/Code/covidvaxnz/R")
+data_dir <- file.path("/Users/danielpringle/Code/covidvaxnz/data")
+  
 ```
 
 ## Ministry of Health Data
@@ -28,16 +30,27 @@ Data downloaded from [NZ Ministry of Health](https://www.health.govt.nz/our-work
 
 ```{r read_prepare_data, eval=TRUE, results='hide', echo=FALSE,  message=FALSE}
 # https://www.health.govt.nz/system/files/documents/pages/211024_-_cvip_equity_-_rate_ratios_and_uptake_over_time.xlsx
-file <- "/Users/danielpringle/Code/covidvaxnz/data/211024_cvip_equity.xlsx"
 
-sheets <- file %>%
+#file <- "/Users/danielpringle/Code/covidvaxnz/data/211024_cvip_equity.xlsx"
+
+# Update MOH file and download 
+url.base <- "https://www.health.govt.nz/system/files/documents/pages/"
+url.file <- "211031_-_cvip_equity_-_rate_ratios_and_uptake_over_time.xlsx"
+maxdate <- as.Date(substr(url.file, 1, 6), format = "%y%m%d")
+
+url <- paste0(url.base, url.file)
+data.file <- file.path(data_dir, "latest_cvip_equity.xlsx")
+download.file(url, data.file)
+
+sheets <- data.file %>%
   excel_sheets() %>% 
   set_names() 
 
-  x <- lapply(sheets, function(X) readxl::read_excel(file, sheet = X))
-  x <- lapply(x, as.data.table)
-  names(x) <- sheets
+class(sheets)
 
+x <- lapply(sheets, function(X) readxl::read_excel(data.file, sheet = X))
+x <- lapply(x, as.data.table)
+names(x) <- sheets
 
 # Long table of vaccination data, and HSU population data by age-ethnic splits
 vx_query <- x[["Vaccination Query"]]
@@ -62,14 +75,18 @@ newnames = c("week",
 setnames(vx, old = oldnames, new = newnames)
 setcolorder(vx, newnames)
 
-# Set as date / factors
+# Set as date, remove incomplete data sometimes present for next week
 vx$week <- as.Date(vx$week)
+vx <- vx[week <= maxdate]
+
+# Set as factors
 vx$dose <- factor(vx$dose)
 vx$agegroup <- factor(vx$agegroup)
 vx$ethnicgroup <- factor(vx$ethnicgroup)
 
 # Remove 'Unknown', 'Overseas' and 'Overseas and undefined'
 vx <- vx[!get("DHB") %in% c('Unknown', 'Overseas','Overseas and undefined')] 
+
 vx$DHB <- factor(vx$DHB)
 
 # pop as HSU population stats with above names
@@ -184,7 +201,6 @@ MOH report data by Ethnic group and age group, and both factors have been commen
 
 ```{r pop_by_DHB_age, include=TRUE, echo = FALSE}
 # Total population by DHB and ethnic group
-
 pop_dhb_age <- pop[ , .(population = sum(popsegment)), 
                 by = c("DHB", "agegroup")]
 pop_dhb_age <- pop_dhb_age[ , `:=`(fraction = round(population/sum(population),3)),
@@ -213,8 +229,12 @@ grid.arrange(p_age_frac65, nrow = 1)
 Let's now look at the vaccination uptake rates, recorded as first or second dose counts per week. 
 
 ```{r vax_uptake_nz,  include = TRUE, echo = FALSE, comment ="",, fig.align='center'}
+tail(vx)
+head(pop)
+pop_nz_eligible = sum(pop$popsegment)
 v_nz <- vx[ , .(count = sum(count),
-                pop = sum(popsegment)), .(week, dose)]
+                pop = pop_nz_eligible), .(week, dose)]
+
 setorderv(v_nz, c("week", "dose"))
 v_nz[ , `:=`(total = cumsum(count)), .(dose)]
 v_nz[ , `:=`(uptake = round(total/pop, 3)), .(dose)]
@@ -225,7 +245,7 @@ p_v_nz_week <- ggplot(data = v_nz, aes(x = week, y = count, color = dose)) +
   scale_y_continuous(position = "right",label=comma) +
   labs(y = "",
        x = "Week ended") +
-  ggtitle("Weekly number of first and second vaccinations received") +
+  ggtitle("Weekly number of vaccine doses received") +
   theme_minimal() +
   theme(legend.position=c(0.2,0.5), 
         legend.direction = "horizontal")
@@ -236,7 +256,7 @@ p_v_nz_total <- ggplot(data = v_nz, aes(x = week, y = total, color = dose)) +
   scale_y_continuous(position = "right",label=comma)+
   labs(y = "",
        x = "") +
-  ggtitle("Total number of first and second vaccinations received to date") +
+  ggtitle("Total number of vaccine doses received to date") +
   theme_minimal() +
   theme(legend.position=c(0.2,0.5), 
         legend.direction = "horizontal")
@@ -250,7 +270,7 @@ p_v_nz_uptake <- ggplot(data = v_nz, aes(x = week, y = uptake, color = dose)) +
                      breaks = seq(0,1,0.2)) +
   labs(y = "",
        x = "") +
-  ggtitle("Uptake of first and second vaccinations") +
+  ggtitle("Uptake of vaccine doses (% of eligible population)") +
   theme_minimal() +
   theme(legend.position=c(0.2,0.5), 
         legend.direction = "horizontal")
@@ -258,9 +278,9 @@ p_v_nz_uptake <- ggplot(data = v_nz, aes(x = week, y = uptake, color = dose)) +
 gA <- ggplotGrob(p_v_nz_week)
 gB <- ggplotGrob(p_v_nz_total)
 gC <- ggplotGrob(p_v_nz_uptake)
-grid::grid.newpage()
-grid::grid.draw(rbind(gA, gB, gC))
-
+#grid::grid.newpage()
+#grid::grid.draw(rbind(gA, gB, gC))
+grid.arrange(gA, gB, gC)
 ```
 
 ### Uptake Rate by DHB
@@ -268,11 +288,14 @@ grid::grid.draw(rbind(gA, gB, gC))
 Let's now look at the vaccination uptake rates, recorded as first or second dose counts per week. 
 
 ```{r vax_uptake_dhb,  include = TRUE, echo = FALSE, comment ="",fig.asp=1, fig.align='center'}
-v_dhb <- vx[ , .(count = sum(count),
-                pop = sum(popsegment)), .(week, dose, DHB)]
+v_dhb <- vx[ , .(count = sum(count)), .(week, dose, DHB)]
+pop_dhb_total <- pop_dhb_tot[ethnicgroup == "Total", c("DHB", "population")]
+
+v_dhb <- merge(x = v_dhb, y = pop_dhb_total, by.x = c("DHB"), by.y = c("DHB"), all.x = TRUE)
+
 setorderv(v_dhb, c("DHB", "week", "dose"))
 v_dhb[ , `:=`(total = cumsum(count)), .(dose, DHB)]
-v_dhb[ , `:=`(uptake = round(total/pop, 3)), .(dose, DHB)]
+v_dhb[ , `:=`(uptake = round(total/population, 3)), .(dose, DHB)]
 
 last_data <- v_dhb[get("week") == max(get("week")), 
                    .(week = week,
@@ -287,11 +310,11 @@ p_v_dhb_uptake <- ggplot(data = v_dhb, aes(x = week, y = uptake, color = dose)) 
   geom_hline(yintercept = 0.9, linetype = "dashed") +
   scale_y_continuous(position = "right",
                      label = scales::percent_format(accuracy = 1),
-                     limits = c(0,1),
+                     limits = c(0,1.2),
                      breaks = seq(0,1,0.2)) +
   labs(y = "", x = "") +
   geom_text_repel(aes(label = paste0(round(100*uptake,0), "%")), data = last_data, size = 5) +
-  ggtitle(paste0("Uptake of first and second vaccinations, at ", format(max(vx$week), "%d %B %Y"))) +
+  ggtitle(paste0("Uptake of vaccine doses, at ", format(maxdate, "%d %B %Y"))) +
   facet_wrap(~DHB) + 
   theme_bw() +
   # theme(legend.position="bottom", 
@@ -307,5 +330,41 @@ p_v_dhb_uptake <- ggplot(data = v_dhb, aes(x = week, y = uptake, color = dose)) 
 grid.arrange(p_v_dhb_uptake)
 
 ```
+
+## Simple logistic fits
+
+Uptake curves in various situations are modelled mathematically using 'logistic' curves. These are one of a variety of 'S' shaped curves, characterised by a uptake rate with is initially slow, then accelerates and then slows again to level out at some 'saturation' level. Let's see how well logistic curves fit the overall uptake in NZ, and by DHB. If they do fit well, the saturation level may be a useful indicator of how much a gap remains to be made up - throough targeted initiatives - do lift the vacciantion rates, overall and in segments. 
+
+### NZ Overall Uptake
+
+```{r vax_uptake_nz_fit,  include = TRUE, echo = TRUE, comment ="",, fig.align='center'}
+
+p_v_nz_uptake2 <- ggplot(data = v_nz, aes(x = week, y = uptake, color = dose)) +
+  geom_line() +
+  scale_x_date() +
+  scale_y_continuous(position = "right",
+                     label = scales::percent_format(accuracy = 1),
+                     limits = c(0,1),
+                     breaks = seq(0,1,0.2)) +
+  labs(y = "",
+       x = "") +
+  ggtitle("Uptake of vaccine doses (% of eligible population)") +
+  theme_minimal() +
+  theme(legend.position=c(0.2,0.5), 
+        legend.direction = "horizontal")
+
+m <- glm(surv ~ size, family = binomial, data = v_nz)
+…and extract fitted values using broom::augment()
+
+plot_df <- augment(m, type.predict = "response")
+head(plot_df)
+
+grid.arrange(p_v_nz_uptake2)
+
+```
+
+
+
+
 
 ### Correlations between uptake and other factors
