@@ -35,7 +35,7 @@ Data downloaded from [NZ Ministry of Health](https://www.health.govt.nz/our-work
 
 # Update MOH file and download 
 url.base <- "https://www.health.govt.nz/system/files/documents/pages/"
-url.file <- "211031_-_cvip_equity_-_rate_ratios_and_uptake_over_time.xlsx"
+url.file <- "211107_-_cvip_equity_-_rate_ratios_and_uptake_over_time.xlsx"
 maxdate <- as.Date(substr(url.file, 1, 6), format = "%y%m%d")
 
 url <- paste0(url.base, url.file)
@@ -232,6 +232,7 @@ Let's now look at the vaccination uptake rates, recorded as first or second dose
 tail(vx)
 head(pop)
 pop_nz_eligible = sum(pop$popsegment)
+names(vx)
 v_nz <- vx[ , .(count = sum(count),
                 pop = pop_nz_eligible), .(week, dose)]
 
@@ -353,11 +354,11 @@ p_v_nz_uptake2 <- ggplot(data = v_nz, aes(x = week, y = uptake, color = dose)) +
   theme(legend.position=c(0.2,0.5), 
         legend.direction = "horizontal")
 
-m <- glm(surv ~ size, family = binomial, data = v_nz)
-…and extract fitted values using broom::augment()
-
-plot_df <- augment(m, type.predict = "response")
-head(plot_df)
+# m <- glm(surv ~ size, family = binomial, data = v_nz)
+# #…and extract fitted values using broom::augment()
+# 
+# plot_df <- augment(m, type.predict = "response")
+# head(plot_df)
 
 grid.arrange(p_v_nz_uptake2)
 
